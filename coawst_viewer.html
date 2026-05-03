@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COAWST Curvilinear Grid Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
+
+    #controls {
+      display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+      background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; flex-wrap: wrap;
+    }
+    #controls h3 { font-size: 13px; color: #a0c4ff; white-space: nowrap; }
+    select, button {
+      background: #0f3460; color: #eee; border: 1px solid #4a90d9;
+      border-radius: 4px; padding: 4px 8px; font-size: 13px; cursor: pointer;
+    }
+    button:hover { background: #4a90d9; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    label { font-size: 12px; color: #aaa; }
+
+    #map-container { position: relative; flex: 1; }
+    #map { width: 100%; height: 100%; }
+
+    /* deck.gl canvas sits on top of MapLibre */
+    #deck-canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+    }
+
+    #colorbar {
+      position: absolute; bottom: 36px; right: 14px;
+      background: rgba(22,33,62,0.88); border-radius: 6px;
+      padding: 8px 10px; font-size: 11px; color: #ddd;
+      display: none;
+    }
+    #colorbar canvas { display: block; width: 180px; height: 14px; border-radius: 3px; margin-bottom: 4px; }
+    #colorbar-labels { display: flex; justify-content: space-between; }
+
+    #status {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(22,33,62,0.9); border: 1px solid #4a90d9;
+      border-radius: 4px; padding: 6px 14px; font-size: 12px;
+      display: none; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <h3>COAWST US East Coast</h3>
+  <div>
+    <label>Variable</label><br>
+    <select id="varSelect">
+      <option value="zeta">Sea Surface Height (zeta)</option>
+      <option value="Hwave">Wave Height (Hwave)</option>
+      <option value="temp">Surface Temp (temp)</option>
+      <option value="salt">Surface Salinity (salt)</option>
+    </select>
+  </div>
+  <div>
+    <label>Colormap</label><br>
+    <select id="cmapSelect">
+      <option value="viridis">viridis</option>
+      <option value="turbo">turbo</option>
+      <option value="plasma">plasma</option>
+      <option value="bwr">bwr (diverging)</option>
+    </select>
+  </div>
+  <div>
+    <label>Opacity</label><br>
+    <input type="range" id="opacitySlider" min="0" max="255" value="210" style="width:80px">
+  </div>
+  <button id="loadBtn">Load Data</button>
+  <span id="loadInfo" style="font-size:11px;color:#aaa"></span>
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+  <div id="status"></div>
+  <div id="colorbar">
+    <canvas id="colorbar-canvas" width="256" height="14"></canvas>
+    <div id="colorbar-labels">
+      <span id="cb-min"></span>
+      <span id="cb-title"></span>
+      <span id="cb-max"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Dependencies -->
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+<script src="curvilinear_mesh_layer.js"></script>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const DATA_DIR = 'data/';  // relative path to binary sample files
+const ROWS = 336, COLS = 896;
+
+const COLORMAP_BASE =
+  'https://cdn.jsdelivr.net/gh/kylebarron/deck.gl-raster/assets/colormaps/';
+
+const VAR_META = {
+  zeta:  { label: 'Sea Surface Height (m)',  file: 'zeta_sample.bin',  cmap: 'bwr'    },
+  Hwave: { label: 'Wave Height (m)',          file: 'Hwave_sample.bin', cmap: 'viridis' },
+  temp:  { label: 'Surface Temp (°C)',        file: 'temp_sample.bin',  cmap: 'turbo'  },
+  salt:  { label: 'Surface Salinity (PSU)',   file: 'salt_sample.bin',  cmap: 'viridis' },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let lon = null, lat = null;
+let colorLUT = null;
+let deckOverlay = null;
+
+// ── MapLibre setup ────────────────────────────────────────────────────────────
+const map = new maplibregl.Map({
+  container: 'map',
+  style: {
+    version: 8,
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors',
+      },
+    },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+  },
+  center: [-74, 35],
+  zoom: 4,
+});
+
+// ── deck.gl MapboxOverlay ─────────────────────────────────────────────────────
+map.on('load', () => {
+  deckOverlay = new deck.MapboxOverlay({ layers: [] });
+  map.addControl(deckOverlay);
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatus(msg, visible = true) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.style.display = visible ? 'block' : 'none';
+}
+
+async function fetchBinary(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  return new Float32Array(await res.arrayBuffer());
+}
+
+async function getColorLUT(name) {
+  return CurvilinearMeshLayer.loadColorLUT(`${COLORMAP_BASE}${name}.png`);
+}
+
+function renderColorbar(lut, vmin, vmax, title) {
+  const canvas = document.getElementById('colorbar-canvas');
+  const ctx = canvas.getContext('2d');
+  for (let x = 0; x < 256; x++) {
+    ctx.fillStyle = `rgb(${lut[x*4]},${lut[x*4+1]},${lut[x*4+2]})`;
+    ctx.fillRect(x, 0, 1, 14);
+  }
+  document.getElementById('cb-min').textContent = vmin.toFixed(2);
+  document.getElementById('cb-max').textContent = vmax.toFixed(2);
+  document.getElementById('cb-title').textContent = title;
+  document.getElementById('colorbar').style.display = 'block';
+}
+
+// ── Load & render ─────────────────────────────────────────────────────────────
+async function loadAndRender() {
+  const varName = document.getElementById('varSelect').value;
+  const cmapName = document.getElementById('cmapSelect').value;
+  const opacity = parseInt(document.getElementById('opacitySlider').value);
+  const meta = VAR_META[varName];
+  const btn = document.getElementById('loadBtn');
+
+  btn.disabled = true;
+  document.getElementById('loadInfo').textContent = '';
+
+  try {
+    // Load grid coordinates once
+    if (!lon) {
+      setStatus('Loading grid coordinates…');
+      [lon, lat] = await Promise.all([
+        fetchBinary(`${DATA_DIR}lon_rho.bin`),
+        fetchBinary(`${DATA_DIR}lat_rho.bin`),
+      ]);
+    }
+
+    // Load colormap
+    setStatus(`Loading colormap (${cmapName})…`);
+    colorLUT = await getColorLUT(cmapName);
+
+    // Load variable data
+    setStatus(`Loading ${varName}…`);
+    const t0 = performance.now();
+    const data = await fetchBinary(`${DATA_DIR}${meta.file}`);
+    const fetchMs = (performance.now() - t0).toFixed(0);
+
+    // Compute range & tessellate
+    setStatus('Tessellating grid…');
+    const t1 = performance.now();
+    const [vmin, vmax] = CurvilinearMeshLayer.dataRange(data);
+    const tess = CurvilinearMeshLayer.tessellate(
+      lon, lat, data, ROWS, COLS, colorLUT, vmin, vmax
+    );
+    const tessMs = (performance.now() - t1).toFixed(0);
+
+    // Override opacity from slider
+    for (let i = 3; i < tess.fillColors.length; i += 4) {
+      if (tess.fillColors[i] > 0) tess.fillColors[i] = opacity;
+    }
+
+    // Build deck.gl layer
+    const layer = CurvilinearMeshLayer.buildLayer(tess, `curvilinear-${varName}`);
+    deckOverlay.setProps({ layers: [layer] });
+
+    // Colorbar
+    renderColorbar(colorLUT, vmin, vmax, meta.label);
+
+    const nCells = tess.nCells.toLocaleString();
+    document.getElementById('loadInfo').textContent =
+      `${nCells} quads | fetch ${fetchMs}ms | tessellate ${tessMs}ms`;
+    setStatus('', false);
+
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────────
+document.getElementById('loadBtn').addEventListener('click', loadAndRender);
+
+// Auto-set colormap when variable changes
+document.getElementById('varSelect').addEventListener('change', () => {
+  const meta = VAR_META[document.getElementById('varSelect').value];
+  document.getElementById('cmapSelect').value = meta.cmap;
+});
+
+// Re-render on opacity change (debounced)
+let opacityTimer;
+document.getElementById('opacitySlider').addEventListener('input', () => {
+  clearTimeout(opacityTimer);
+  opacityTimer = setTimeout(loadAndRender, 200);
+});
+</script>
+
+<!--
+  ── icechunk.js live loading (requires bundler — vite/webpack) ────────────────
+  To replace the pre-exported binary files with live data from the icechunk store:
+
+  import { Repository } from "@earthmover/icechunk";
+  import { open, root, slice } from "zarrita";
+
+  const repo = await Repository.open({
+    storage: {
+      type: "s3",
+      bucket: "usgs-coawst",
+      prefix: "useast-archive/icechunk/coawst-useast.icechunk",
+      region: "us-west-2",
+      anonymous: true,
+    }
+  });
+  const session = repo.readonly_session("main");
+  const store = session.store;
+  const arr = await open(store, { path: "zeta" });
+  // slice one timestep: arr[timeIdx, :, :]
+  const data = await arr.get([timeIdx, slice(null), slice(null)]);
+-->
+</body>
+</html>

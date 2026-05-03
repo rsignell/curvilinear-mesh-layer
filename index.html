@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COAWST Curvilinear Grid Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; }
+
+    #controls {
+      display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+      background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; flex-wrap: wrap;
+    }
+    #controls h3 { font-size: 13px; color: #a0c4ff; white-space: nowrap; }
+    label { font-size: 11px; color: #aaa; display: block; margin-bottom: 2px; }
+    select, input[type=number], button {
+      background: #0f3460; color: #eee; border: 1px solid #4a90d9;
+      border-radius: 4px; padding: 4px 8px; font-size: 13px; cursor: pointer;
+    }
+    button { white-space: nowrap; }
+    button:hover:not(:disabled) { background: #4a90d9; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    input[type=range] { vertical-align: middle; }
+
+    #map-container { position: relative; flex: 1; }
+    #map { width: 100%; height: 100%; }
+
+    #colorbar {
+      position: absolute; bottom: 36px; right: 14px;
+      background: rgba(22,33,62,0.9); border-radius: 6px;
+      padding: 8px 10px; font-size: 11px; color: #ddd; display: none;
+      min-width: 200px;
+    }
+    #colorbar-canvas { display: block; width: 100%; height: 14px; border-radius: 3px; margin-bottom: 4px; }
+    #colorbar-labels { display: flex; justify-content: space-between; }
+    #colorbar-title { text-align: center; margin-bottom: 4px; font-size: 10px; color: #aaa; }
+
+    #status {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(22,33,62,0.92); border: 1px solid #4a90d9;
+      border-radius: 4px; padding: 6px 14px; font-size: 12px;
+      white-space: nowrap; display: none; pointer-events: none; z-index: 10;
+    }
+    #status.error { border-color: #e05; color: #faa; }
+
+    #perf { font-size: 11px; color: #888; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <h3>COAWST US East Coast</h3>
+
+  <div>
+    <label>Variable</label>
+    <select id="varSelect">
+      <option value="zeta">Sea Surface Height (zeta)</option>
+      <option value="Hwave">Wave Height (Hwave)</option>
+      <option value="temp">Surface Temp (temp)</option>
+      <option value="salt">Surface Salinity (salt)</option>
+    </select>
+  </div>
+
+  <div>
+    <label>Time index (0–112391)</label>
+    <input type="number" id="timeInput" value="27000" min="0" max="112391" style="width:90px">
+  </div>
+
+  <div>
+    <label>Colormap</label>
+    <select id="cmapSelect">
+      <option value="viridis">viridis</option>
+      <option value="turbo">turbo</option>
+      <option value="plasma">plasma</option>
+      <option value="bwr">bwr (diverging)</option>
+      <option value="RdYlBu_r">RdYlBu_r</option>
+    </select>
+  </div>
+
+  <div>
+    <label>Opacity</label>
+    <input type="range" id="opacitySlider" min="0" max="255" value="210" style="width:80px">
+  </div>
+
+  <button id="loadBtn">Load</button>
+  <span id="perf"></span>
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+  <div id="status"></div>
+  <div id="colorbar">
+    <div id="colorbar-title"></div>
+    <canvas id="colorbar-canvas" width="256" height="14"></canvas>
+    <div id="colorbar-labels">
+      <span id="cb-min"></span>
+      <span id="cb-max"></span>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
