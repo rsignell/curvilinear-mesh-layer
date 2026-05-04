@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci --omit=optional
+      - run: npm ci
       - name: Install icechunk WASM package (bypasses cpu:wasm32 platform check)
         run: |
           mkdir -p node_modules/@earthmover/icechunk-wasm32-wasi
