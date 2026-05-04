@@ -10,13 +10,15 @@
   },
   "dependencies": {
     "@earthmover/icechunk": "^2.0.3",
-    "zarrita": "^0.7.2",
+    "@earthmover/icechunk-wasm32-wasi": "^2.0.3",
     "deck.gl": "^9.3.2",
-    "maplibre-gl": "^4.7.0"
+    "maplibre-gl": "^4.7.0",
+    "playwright": "^1.59.1",
+    "zarrita": "^0.7.2"
   },
   "devDependencies": {
     "vite": "^6.0.0",
-    "vite-plugin-wasm": "^3.3.0",
-    "vite-plugin-top-level-await": "^1.4.4"
+    "vite-plugin-top-level-await": "^1.4.4",
+    "vite-plugin-wasm": "^3.3.0"
   }
 }

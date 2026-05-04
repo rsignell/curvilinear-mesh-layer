@@ -11,6 +11,9 @@
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
+import { SolidPolygonLayer } from '@deck.gl/layers';
+// curvilinear_mesh_layer.js uses deck.SolidPolygonLayer as a global
+window.deck = { SolidPolygonLayer };
 import { Repository } from '@earthmover/icechunk';
 import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
 import { root as zarrRoot, open as zarrOpen, get as zarrGet, slice } from 'zarrita';
