@@ -23,6 +23,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm install --force @earthmover/icechunk-wasm32-wasi@2.0.3
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
