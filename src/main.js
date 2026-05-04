@@ -11,7 +11,8 @@
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { IcechunkStore } from 'icechunk-js';
+import { Repository } from '@earthmover/icechunk';
+import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
 import { root as zarrRoot, open as zarrOpen, get as zarrGet, slice } from 'zarrita';
 import { loadColorLUT, tessellate, buildLayer, dataRange } from '../curvilinear_mesh_layer.js';
 
@@ -87,7 +88,12 @@ map.on('load', () => {
 // ── Open icechunk store ────────────────────────────────────────────────────────
 async function openIcechunkStore() {
   setStatus('Opening icechunk store…');
-  return IcechunkStore.open(ICECHUNK_URL, { branch: 'main', formatVersion: 'v1' });
+  const storage = createFetchStorage(ICECHUNK_URL);
+  const repo = await Repository.open(storage, undefined, {
+    'https://usgs-coawst.s3.us-west-2.amazonaws.com/': null,
+  });
+  const session = await repo.readonlySession({ branch: 'main' });
+  return session.store;
 }
 
 // ── Read a zarr array from the store ──────────────────────────────────────────

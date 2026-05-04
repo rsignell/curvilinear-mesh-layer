@@ -9,12 +9,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "icechunk-js": "^0.4.0",
+    "@earthmover/icechunk": "^2.0.3",
     "zarrita": "^0.7.2",
     "deck.gl": "^9.3.2",
     "maplibre-gl": "^4.7.0"
   },
   "devDependencies": {
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vite-plugin-wasm": "^3.3.0",
+    "vite-plugin-top-level-await": "^1.4.4"
   }
 }
