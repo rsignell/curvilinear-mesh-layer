@@ -6,13 +6,13 @@ const TRIANGLE_LAYER_VERTEX_SHADER = `#version 300 es
 
 in vec3 positions;
 in vec4 colors;
-in vec3 pickingColors;
+in vec4 pickingColors;
 
 out vec4 vColor;
 
 void main(void) {
   geometry.worldPosition = positions;
-  geometry.pickingColor = pickingColors;
+  geometry.pickingColor = pickingColors.xyz;
   gl_Position = project_position_to_clipspace(positions, vec3(0.0), vec3(0.0), geometry.position);
   DECKGL_FILTER_GL_POSITION(gl_Position, geometry);
   vColor = vec4(colors.rgb, colors.a * layer.opacity);
@@ -71,7 +71,7 @@ class CurvilinearTriangleLayer extends Layer {
         attributes: {
           positions: { value: data.positions, size: 3 },
           colors: { value: data.colors, size: 4, normalized: true },
-          pickingColors: { value: data.pickingColors, size: 3 },
+          pickingColors: { value: data.pickingColors, size: 4, normalized: true },
         },
       }),
       isInstanced: false,

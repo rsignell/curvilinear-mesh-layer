@@ -179,9 +179,10 @@ function inferCornersFromCenters(lon, lat, data, rows, cols) {
 
 function encodePickingColor(index, target, offset) {
   const value = index + 1;
-  target[offset] = value & 255;
+  target[offset]     = value & 255;
   target[offset + 1] = (value >> 8) & 255;
   target[offset + 2] = (value >> 16) & 255;
+  target[offset + 3] = 255;
 }
 
 function writeColor(value, colorLUT, vmin, range, opacity, output, offset, visible) {
@@ -237,7 +238,7 @@ function tessellateTriangles(
   const cornerCols = cols + 1;
   const positions = new Float32Array(vertexCount * 3);
   const colors = new Uint8Array(vertexCount * 4);
-  const pickingColors = new Uint8Array(vertexCount * 3);
+  const pickingColors = new Uint8Array(vertexCount * 4);
   const cellValues = new Float32Array(cellCount);
   const range = vmax - vmin || 1;
 
@@ -276,7 +277,7 @@ function tessellateTriangles(
         colorOffset += 4;
 
         encodePickingColor(cell, pickingColors, pickingOffset);
-        pickingOffset += 3;
+        pickingOffset += 4;
       }
     }
   }

@@ -1,19 +1,16 @@
 /**
  * COAWST Curvilinear Grid Viewer
  *
- * Opens the COAWST icechunk store from AWS Open Data via icechunk.js,
- * infers curvilinear cell corners from 2D center coordinates, splits each
- * inferred quad into fixed-diagonal triangles, and renders with deck.gl over
- * a MapLibre basemap.
+ * Reads Kerchunk JSON reference files from S3, fetches byte ranges from the
+ * raw NetCDF files via HTTP range requests, and renders with deck.gl over a
+ * MapLibre basemap.  No icechunk dependency required.
  *
- * Data: s3://usgs-coawst/useast-archive/icechunk/coawst-useast.icechunk
+ * Data: s3://usgs-coawst/useast-archive/json/ (740 weekly Kerchunk JSON files)
  * Grid: 336 × 896 (eta_rho × xi_rho), ~300K curvilinear center cells
  */
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { Repository } from '@earthmover/icechunk';
-import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
 import { root as zarrRoot, open as zarrOpen, get as zarrGet, slice } from 'zarrita';
 import {
   inferCornersFromCenters,
@@ -25,12 +22,8 @@ import { buildTriangleLayer } from './curvilinear_triangle_layer.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const ROWS = 336, COLS = 896;
-
-// Public S3 URL for the icechunk store (AWS Open Data Program)
-const ICECHUNK_URL =
-  'https://usgs-coawst.s3.us-west-2.amazonaws.com' +
-  '/useast-archive/icechunk/coawst-useast.icechunk';
-
+const S3_BASE  = 'https://usgs-coawst.s3.us-west-2.amazonaws.com';
+const JSON_PFX = 'useast-archive/json';
 const COLORMAP_BASE =
   'https://cdn.jsdelivr.net/gh/kylebarron/deck.gl-raster/assets/colormaps/';
 
@@ -42,8 +35,8 @@ const VAR_META = {
 };
 
 // ── App state ─────────────────────────────────────────────────────────────────
-let zarrStore = null;   // icechunk zarr store (opened once)
-let lon = null;         // Float32Array grid coordinates (cached)
+let jsonFileList = null;  // sorted S3 keys for json/*.json, cached after first fetch
+let lon = null;           // Float32Array grid coordinates (cached after first load)
 let lat = null;
 let deckOverlay = null;
 
@@ -92,44 +85,106 @@ map.on('load', () => {
   map.addControl(deckOverlay);
 });
 
-// ── Open icechunk store ────────────────────────────────────────────────────────
-async function openIcechunkStore() {
-  setStatus('Opening icechunk store…');
-  const storage = createFetchStorage(ICECHUNK_URL);
-  const repo = await Repository.open(storage);
-  const session = await repo.readonlySession({ branch: 'main' });
-  const rawStore = session.store;
-  // zarrita passes keys with leading slashes; the earthmover WASM store expects none
-  return new Proxy(rawStore, {
-    get(target, prop) {
-      if (prop === 'get') {
-        return (key, ...rest) => target.get(key.startsWith('/') ? key.slice(1) : key, ...rest);
+// ── Kerchunk store ────────────────────────────────────────────────────────────
+
+function s3ToHttps(url) {
+  // s3://bucket/key → https://bucket.s3.us-west-2.amazonaws.com/key
+  return url.replace(/^s3:\/\/([^/]+)\//, `https://$1.s3.us-west-2.amazonaws.com/`);
+}
+
+// Build a zarrita-compatible store from a parsed Kerchunk `refs` dict.
+function makeKerchunkStore(refs) {
+  async function getBytes(key) {
+    const k = key.startsWith('/') ? key.slice(1) : key;
+    const ref = refs[k];
+    if (ref === undefined) return undefined;
+
+    // Inline string: raw JSON metadata or base64-encoded bytes
+    if (typeof ref === 'string') {
+      if (ref.startsWith('base64:')) {
+        const bin = atob(ref.slice(7));
+        const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        return buf;
       }
-      if (prop === 'getRange') {
-        return (key, ...rest) => target.getRange(key.startsWith('/') ? key.slice(1) : key, ...rest);
-      }
-      const val = target[prop];
-      return typeof val === 'function' ? val.bind(target) : val;
+      return new TextEncoder().encode(ref);
+    }
+
+    // Array reference: [s3_url, byte_offset, byte_length]
+    if (Array.isArray(ref)) {
+      const [rawUrl, offset, length] = ref;
+      const url = s3ToHttps(rawUrl);
+      const headers = (offset != null && length != null)
+        ? { Range: `bytes=${offset}-${offset + length - 1}` }
+        : {};
+      const resp = await fetch(url, { headers });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${url}`);
+      return new Uint8Array(await resp.arrayBuffer());
+    }
+
+    return undefined;
+  }
+
+  return {
+    get: getBytes,
+    // zarrita may call getRange for partial reads; satisfy it by slicing get()
+    async getRange(key, offset, length) {
+      const data = await getBytes(key);
+      return data?.slice(offset, offset + length);
     },
-  });
+  };
 }
 
-// ── Read a zarr array from the store ──────────────────────────────────────────
-async function readArray(path, selection = null) {
-  const r = zarrRoot(zarrStore);
-  const arr = await zarrOpen(r.resolve(path), { kind: 'array' });
+// Fetch and cache the sorted list of Kerchunk JSON S3 keys.
+async function getFileList() {
+  if (jsonFileList) return jsonFileList;
+  setStatus('Fetching file list…');
+  const listUrl = `${S3_BASE}/?list-type=2&prefix=${JSON_PFX}/&suffix=.json`;
+  const resp = await fetch(listUrl);
+  if (!resp.ok) throw new Error(`S3 list failed: ${resp.status}`);
+  const xml  = await resp.text();
+  const keys = [];
+  const re   = /<Key>(.*?\.json)<\/Key>/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) keys.push(m[1]);
+  keys.sort();
+  jsonFileList = keys;
+  return keys;
+}
+
+// Load the Kerchunk JSON for a given file index and return a zarrita store.
+async function loadKerchunkStore(fileIdx) {
+  const files = await getFileList();
+  const key   = files[fileIdx];
+  if (!key) throw new Error(`File index ${fileIdx} out of range (0–${files.length - 1})`);
+  const label = key.split('/').pop().replace('.json', '');
+  setStatus(`Loading ${label} (file ${fileIdx})…`);
+  const resp = await fetch(`${S3_BASE}/${key}`);
+  if (!resp.ok) throw new Error(`Cannot load ${key}: ${resp.status}`);
+  const json = await resp.json();
+  return makeKerchunkStore(json.refs);
+}
+
+// ── Array reading ─────────────────────────────────────────────────────────────
+
+async function readArray(store, path, selection = null) {
+  const r      = zarrRoot(store);
+  const arr    = await zarrOpen(r.resolve(path), { kind: 'array' });
   const result = selection ? await zarrGet(arr, selection) : await zarrGet(arr);
-  // zarrita returns { data: TypedArray, shape, stride, offset }
-  return new Float32Array(result.data.buffer ?? result.data);
+  const raw    = result.data;
+  // zarr v2 stores lon/lat as f8; convert to f32 for tessellation
+  if (raw instanceof Float32Array) return raw;
+  return Float32Array.from(raw);
 }
 
-// ── Load grid coordinates (cached) ───────────────────────────────────────────
-async function loadGrid() {
+// ── Grid loading (cached) ─────────────────────────────────────────────────────
+
+async function loadGrid(store) {
   if (lon) return;
   setStatus('Loading grid coordinates (lon_rho, lat_rho)…');
   [lon, lat] = await Promise.all([
-    readArray('lon_rho'),
-    readArray('lat_rho'),
+    readArray(store, 'lon_rho'),
+    readArray(store, 'lat_rho'),
   ]);
   console.log(`Grid: ${ROWS}×${COLS}, lon [${lon[0].toFixed(2)}, ${lon[lon.length-1].toFixed(2)}]`);
 }
@@ -137,7 +192,7 @@ async function loadGrid() {
 // ── Load & render ─────────────────────────────────────────────────────────────
 async function loadAndRender() {
   const varName  = document.getElementById('varSelect').value;
-  const timeIdx  = parseInt(document.getElementById('timeInput').value);
+  const fileIdx  = parseInt(document.getElementById('timeInput').value);
   const cmapName = document.getElementById('cmapSelect').value;
   const opacity  = parseInt(document.getElementById('opacitySlider').value);
   const meta     = VAR_META[varName];
@@ -147,72 +202,57 @@ async function loadAndRender() {
   document.getElementById('perf').textContent = '';
 
   try {
-    // Open store on first call
-    if (!zarrStore) {
-      zarrStore = await openIcechunkStore();
-    }
+    const store = await loadKerchunkStore(fileIdx);
 
-    // Load grid once
-    await loadGrid();
+    // Load grid once (from the first file that gets loaded)
+    await loadGrid(store);
 
     // Load colormap LUT
     setStatus(`Loading colormap (${cmapName})…`);
     const lut = await loadColorLUT(`${COLORMAP_BASE}${cmapName}.png`);
 
-    // Load one time slice of the chosen variable
-    setStatus(`Loading ${varName}[${timeIdx}]…`);
+    // Load one time step from the variable (always take local time index 0)
+    setStatus(`Loading ${varName} from file ${fileIdx}…`);
     const t0 = performance.now();
 
     let data;
     if (meta.is3d) {
-      // 3D variable (ocean_time, s_rho, eta_rho, xi_rho) — select surface level (s_rho=-1)
-      // zarrita slice: [timeIdx, lastSrho, :, :]
-      // We don't know s_rho length without a separate read; use -1 via zarrita slice
-      const r = zarrRoot(zarrStore);
-      const arr = await zarrOpen(r.resolve(varName), { kind: 'array' });
+      // Shape: [n_time, s_rho, eta_rho, xi_rho] — select time=0, surface s_rho level
+      const r    = zarrRoot(store);
+      const arr  = await zarrOpen(r.resolve(varName), { kind: 'array' });
       const nSrho = arr.shape[1];
-      const result = await zarrGet(arr, [timeIdx, nSrho - 1, slice(null), slice(null)]);
-      data = new Float32Array(result.data.buffer ?? result.data);
+      const result = await zarrGet(arr, [0, nSrho - 1, slice(null), slice(null)]);
+      const raw = result.data;
+      data = raw instanceof Float32Array ? raw : Float32Array.from(raw);
     } else {
-      // 2D variable (ocean_time, eta_rho, xi_rho)
-      const r = zarrRoot(zarrStore);
-      const arr = await zarrOpen(r.resolve(varName), { kind: 'array' });
-      const result = await zarrGet(arr, [timeIdx, slice(null), slice(null)]);
-      data = new Float32Array(result.data.buffer ?? result.data);
+      // Shape: [n_time, eta_rho, xi_rho] — select time=0
+      data = await readArray(store, varName, [0, slice(null), slice(null)]);
     }
 
     const fetchMs = (performance.now() - t0).toFixed(0);
 
-    // Infer corners and tessellate to fixed-diagonal triangles
+    // Infer corners and tessellate
     setStatus('Tessellating triangles…');
     const t1 = performance.now();
     const [vmin, vmax] = dataRange(data);
     const corners = inferCornersFromCenters(lon, lat, data, ROWS, COLS);
     const tess = tessellateTriangles(
-      corners.cornerLon,
-      corners.cornerLat,
-      corners.cornerData,
-      data,
-      ROWS,
-      COLS,
-      lut,
-      vmin,
-      vmax,
-      opacity
+      corners.cornerLon, corners.cornerLat, corners.cornerData,
+      data, ROWS, COLS, lut, vmin, vmax, opacity,
     );
     const tessMs = (performance.now() - t1).toFixed(0);
 
-    // Build deck.gl layer and update overlay
-    const layer = buildTriangleLayer(tess, `curvilinear-${varName}-${timeIdx}`);
+    // Render
+    const layer = buildTriangleLayer(tess, `curvilinear-${varName}-${fileIdx}`);
     deckOverlay.setProps({ layers: [layer] });
 
     renderColorbar(lut, vmin, vmax, meta.label);
     setStatus('');
 
     const nCells = tess.cellCount.toLocaleString();
-    const nTriangles = (tess.cellCount * 2).toLocaleString();
+    const nTri   = (tess.cellCount * 2).toLocaleString();
     document.getElementById('perf').textContent =
-      `${nCells} cells / ${nTriangles} triangles | fetch ${fetchMs}ms | tessellate ${tessMs}ms`;
+      `${nCells} cells / ${nTri} triangles | fetch ${fetchMs}ms | tessellate ${tessMs}ms`;
 
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);
@@ -225,13 +265,11 @@ async function loadAndRender() {
 // ── Event wiring ──────────────────────────────────────────────────────────────
 document.getElementById('loadBtn').addEventListener('click', loadAndRender);
 
-// Sync colormap suggestion when variable changes
 document.getElementById('varSelect').addEventListener('change', () => {
   const meta = VAR_META[document.getElementById('varSelect').value];
   document.getElementById('cmapSelect').value = meta.cmap;
 });
 
-// Re-render on opacity slider release
 document.getElementById('opacitySlider').addEventListener('change', () => {
   if (deckOverlay && lon) loadAndRender();
 });
