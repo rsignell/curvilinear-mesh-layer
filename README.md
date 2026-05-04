@@ -13,21 +13,22 @@ ROMS/COAWST uses a **curvilinear sigma-coordinate grid** where longitude and
 latitude are 2D arrays (`lon_rho[336, 896]`, `lat_rho[336, 896]`), not 1D
 vectors. Standard map tile libraries can't render this directly.
 
-`curvilinear_mesh_layer.js` solves this in three steps:
+The Vite viewer solves this in three steps:
 
 1. **Read** — icechunk.js opens `s3://usgs-coawst/.../coawst-useast.icechunk`
    via `createFetchStorage` (HTTP byte-range requests, no AWS credentials)
    and zarrita reads a single time slice of any variable
-2. **Tessellate** — each grid cell becomes a quadrilateral (4-vertex polygon)
-   defined by corner lon/lat points, matching `hvplot.quadmesh` exactly
-3. **Render** — ~300K quads at 60fps via deck.gl `SolidPolygonLayer` (binary
-   attribute mode: pure TypedArrays, no JavaScript objects per polygon)
+2. **Tessellate** — center lon/lat coordinates are extrapolated to inferred
+   cell corners; each inferred quad is split into two fixed-diagonal triangles
+   with per-vertex color values
+3. **Render** — ~300K cells / ~600K triangles via a custom deck.gl layer
+   (binary attribute mode: pure TypedArrays, no JavaScript objects per cell)
 
 ```
 icechunk.js + zarrita
   → lon_rho[336,896] + zeta[timeIdx, 336, 896]  (from S3, virtual chunks)
-  → tessellate(): 299,825 quads as binary typed arrays
-  → deck.gl SolidPolygonLayer (GPU render at 60fps)
+  → inferCornersFromCenters() + tessellateTriangles()
+  → deck.gl custom triangle layer with interpolated vertex colors
   → MapLibre GL JS basemap
 ```
 
@@ -58,7 +59,8 @@ S3 static hosting, or any CDN.
 
 | File | Purpose |
 |------|---------|
-| `curvilinear_mesh_layer.js` | Reusable tessellation + deck.gl layer module |
+| `curvilinear_mesh_layer.js` | Reusable flat-quad and triangle tessellation helpers |
+| `src/curvilinear_triangle_layer.js` | Custom deck.gl triangle layer with interpolated vertex colors |
 | `src/main.js` | App logic: icechunk.js → zarrita → deck.gl |
 | `index.html` | HTML entry point (Vite) |
 | `vite.config.js` | Vite config (WASM plugin for icechunk.js) |
@@ -74,7 +76,7 @@ The core module works both as an ES module (via Vite) and as a plain
 // Load a 256-entry RGBA LUT from a colormap PNG
 const lut = await CurvilinearMeshLayer.loadColorLUT(url);
 
-// Tessellate — lon, lat, data are flat Float32Arrays (rows × cols)
+// Legacy flat-quad tessellation — lon, lat, data are flat Float32Arrays (rows × cols)
 const tess = CurvilinearMeshLayer.tessellate(
   lon, lat, data, rows, cols, lut, vmin, vmax
 );
@@ -85,6 +87,13 @@ deckOverlay.setProps({ layers: [layer] });
 
 // Robust [vmin, vmax] ignoring NaN/fill values
 const [vmin, vmax] = CurvilinearMeshLayer.dataRange(data);
+
+// Triangle tessellation for center-coordinate grids
+const corners = CurvilinearMeshLayer.inferCornersFromCenters(lon, lat, data, rows, cols);
+const triTess = CurvilinearMeshLayer.tessellateTriangles(
+  corners.cornerLon, corners.cornerLat, corners.cornerData,
+  data, rows, cols, lut, vmin, vmax, 210
+);
 ```
 
 ## Note on virtual chunks

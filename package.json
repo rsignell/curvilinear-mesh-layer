@@ -6,21 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {
     "@earthmover/icechunk": "^2.0.3",
-    "@emnapi/core": "^1.9.2",
-    "@emnapi/runtime": "^1.9.2",
-    "@napi-rs/wasm-runtime": "^1.1.4",
+    "@earthmover/icechunk-wasm32-wasi": "^2.0.3",
+    "@luma.gl/engine": "^9.3.3",
     "bubblewrap": "^0.2.0",
     "deck.gl": "^9.3.2",
     "maplibre-gl": "^4.7.0",
     "playwright": "^1.59.1",
     "zarrita": "^0.7.2"
-  },
-  "overrides": {
-    "@earthmover/icechunk-wasm32-wasi": "file:./stubs/icechunk-wasm32-wasi"
   },
   "devDependencies": {
     "vite": "^6.0.0",

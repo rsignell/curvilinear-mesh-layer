@@ -2,22 +2,26 @@
  * COAWST Curvilinear Grid Viewer
  *
  * Opens the COAWST icechunk store from AWS Open Data via icechunk.js,
- * tessellates the 2D curvilinear ROMS grid with curvilinear_mesh_layer.js,
- * and renders with deck.gl over a MapLibre basemap.
+ * infers curvilinear cell corners from 2D center coordinates, splits each
+ * inferred quad into fixed-diagonal triangles, and renders with deck.gl over
+ * a MapLibre basemap.
  *
  * Data: s3://usgs-coawst/useast-archive/icechunk/coawst-useast.icechunk
- * Grid: 336 × 896 (eta_rho × xi_rho), ~300K curvilinear quad cells
+ * Grid: 336 × 896 (eta_rho × xi_rho), ~300K curvilinear center cells
  */
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { SolidPolygonLayer } from '@deck.gl/layers';
-// curvilinear_mesh_layer.js uses deck.SolidPolygonLayer as a global
-window.deck = { SolidPolygonLayer };
 import { Repository } from '@earthmover/icechunk';
 import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
 import { root as zarrRoot, open as zarrOpen, get as zarrGet, slice } from 'zarrita';
-import { loadColorLUT, tessellate, buildLayer, dataRange } from '../curvilinear_mesh_layer.js';
+import {
+  inferCornersFromCenters,
+  loadColorLUT,
+  tessellateTriangles,
+  dataRange,
+} from '../curvilinear_mesh_layer.js';
+import { buildTriangleLayer } from './curvilinear_triangle_layer.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const ROWS = 336, COLS = 896;
@@ -92,11 +96,22 @@ map.on('load', () => {
 async function openIcechunkStore() {
   setStatus('Opening icechunk store…');
   const storage = createFetchStorage(ICECHUNK_URL);
-  const repo = await Repository.open(storage, undefined, {
-    'https://usgs-coawst.s3.us-west-2.amazonaws.com/': null,
-  });
+  const repo = await Repository.open(storage);
   const session = await repo.readonlySession({ branch: 'main' });
-  return session.store;
+  const rawStore = session.store;
+  // zarrita passes keys with leading slashes; the earthmover WASM store expects none
+  return new Proxy(rawStore, {
+    get(target, prop) {
+      if (prop === 'get') {
+        return (key, ...rest) => target.get(key.startsWith('/') ? key.slice(1) : key, ...rest);
+      }
+      if (prop === 'getRange') {
+        return (key, ...rest) => target.getRange(key.startsWith('/') ? key.slice(1) : key, ...rest);
+      }
+      const val = target[prop];
+      return typeof val === 'function' ? val.bind(target) : val;
+    },
+  });
 }
 
 // ── Read a zarr array from the store ──────────────────────────────────────────
@@ -168,28 +183,36 @@ async function loadAndRender() {
 
     const fetchMs = (performance.now() - t0).toFixed(0);
 
-    // Tessellate
-    setStatus('Tessellating…');
+    // Infer corners and tessellate to fixed-diagonal triangles
+    setStatus('Tessellating triangles…');
     const t1 = performance.now();
     const [vmin, vmax] = dataRange(data);
-    const tess = tessellate(lon, lat, data, ROWS, COLS, lut, vmin, vmax);
+    const corners = inferCornersFromCenters(lon, lat, data, ROWS, COLS);
+    const tess = tessellateTriangles(
+      corners.cornerLon,
+      corners.cornerLat,
+      corners.cornerData,
+      data,
+      ROWS,
+      COLS,
+      lut,
+      vmin,
+      vmax,
+      opacity
+    );
     const tessMs = (performance.now() - t1).toFixed(0);
 
-    // Apply opacity from slider
-    for (let i = 3; i < tess.fillColors.length; i += 4) {
-      if (tess.fillColors[i] > 0) tess.fillColors[i] = opacity;
-    }
-
     // Build deck.gl layer and update overlay
-    const layer = buildLayer(tess, `curvilinear-${varName}-${timeIdx}`);
+    const layer = buildTriangleLayer(tess, `curvilinear-${varName}-${timeIdx}`);
     deckOverlay.setProps({ layers: [layer] });
 
     renderColorbar(lut, vmin, vmax, meta.label);
     setStatus('');
 
-    const nCells = tess.nCells.toLocaleString();
+    const nCells = tess.cellCount.toLocaleString();
+    const nTriangles = (tess.cellCount * 2).toLocaleString();
     document.getElementById('perf').textContent =
-      `${nCells} quads | fetch ${fetchMs}ms | tessellate ${tessMs}ms`;
+      `${nCells} cells / ${nTriangles} triangles | fetch ${fetchMs}ms | tessellate ${tessMs}ms`;
 
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);

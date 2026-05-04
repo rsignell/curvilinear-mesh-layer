@@ -115,6 +115,175 @@ function tessellate(lon, lat, data, rows, cols, colorLUT, vmin, vmax) {
   return { startIndices, positions, fillColors, nCells };
 }
 
+function isValidValue(value, fillThreshold = 1e36) {
+  return Number.isFinite(value) && Math.abs(value) < fillThreshold;
+}
+
+function bilinearExtrapolate(values, rows, cols, y, x) {
+  const i0 = Math.max(0, Math.min(rows - 2, Math.floor(y)));
+  const j0 = Math.max(0, Math.min(cols - 2, Math.floor(x)));
+  const fy = y - i0;
+  const fx = x - j0;
+
+  const a = values[i0 * cols + j0];
+  const b = values[i0 * cols + j0 + 1];
+  const c = values[(i0 + 1) * cols + j0];
+  const d = values[(i0 + 1) * cols + j0 + 1];
+
+  return (
+    a * (1 - fy) * (1 - fx) +
+    b * (1 - fy) * fx +
+    c * fy * (1 - fx) +
+    d * fy * fx
+  );
+}
+
+/**
+ * Infer cell-corner lon/lat/value arrays from center-coordinate model output.
+ *
+ * The corner grid has shape (rows + 1) x (cols + 1). Interior corners are the
+ * bilinear average of the four surrounding centers; edges are linearly
+ * extrapolated from the nearest two rows/columns of centers.
+ *
+ * @param {Float32Array} lon   Center longitudes, length rows x cols
+ * @param {Float32Array} lat   Center latitudes,  length rows x cols
+ * @param {Float32Array} data  Center values,     length rows x cols
+ * @param {number} rows
+ * @param {number} cols
+ * @returns {{cornerLon: Float32Array, cornerLat: Float32Array, cornerData: Float32Array}}
+ */
+function inferCornersFromCenters(lon, lat, data, rows, cols) {
+  if (rows < 2 || cols < 2) {
+    throw new Error('Corner inference requires at least a 2x2 center grid');
+  }
+
+  const cornerRows = rows + 1;
+  const cornerCols = cols + 1;
+  const cornerLon = new Float32Array(cornerRows * cornerCols);
+  const cornerLat = new Float32Array(cornerRows * cornerCols);
+  const cornerData = new Float32Array(cornerRows * cornerCols);
+
+  for (let i = 0; i < cornerRows; i++) {
+    const y = i - 0.5;
+    for (let j = 0; j < cornerCols; j++) {
+      const x = j - 0.5;
+      const idx = i * cornerCols + j;
+      cornerLon[idx] = bilinearExtrapolate(lon, rows, cols, y, x);
+      cornerLat[idx] = bilinearExtrapolate(lat, rows, cols, y, x);
+      cornerData[idx] = bilinearExtrapolate(data, rows, cols, y, x);
+    }
+  }
+
+  return { cornerLon, cornerLat, cornerData };
+}
+
+function encodePickingColor(index, target, offset) {
+  const value = index + 1;
+  target[offset] = value & 255;
+  target[offset + 1] = (value >> 8) & 255;
+  target[offset + 2] = (value >> 16) & 255;
+}
+
+function writeColor(value, colorLUT, vmin, range, opacity, output, offset, visible) {
+  if (!visible || !isValidValue(value)) {
+    output[offset] = 0;
+    output[offset + 1] = 0;
+    output[offset + 2] = 0;
+    output[offset + 3] = 0;
+    return;
+  }
+
+  const t = Math.max(0, Math.min(1, (value - vmin) / range));
+  const lutIdx = Math.round(t * 255) * 4;
+  output[offset] = colorLUT[lutIdx];
+  output[offset + 1] = colorLUT[lutIdx + 1];
+  output[offset + 2] = colorLUT[lutIdx + 2];
+  output[offset + 3] = opacity;
+}
+
+/**
+ * Tessellate inferred curvilinear cell corners into fixed-diagonal triangles.
+ *
+ * Each center-grid cell renders as one inferred quad split SW-SE-NE and
+ * SW-NE-NW. Vertex colors come from inferred corner values so the GPU
+ * interpolates the scalar field inside each triangle.
+ *
+ * @param {Float32Array} cornerLon  Corner longitudes, shape (rows + 1) x (cols + 1)
+ * @param {Float32Array} cornerLat  Corner latitudes,  shape (rows + 1) x (cols + 1)
+ * @param {Float32Array} cornerData Corner values,     shape (rows + 1) x (cols + 1)
+ * @param {Float32Array} centerData Center values,     shape rows x cols
+ * @param {number} rows
+ * @param {number} cols
+ * @param {Uint8ClampedArray} colorLUT
+ * @param {number} vmin
+ * @param {number} vmax
+ * @param {number} opacity
+ * @returns {{positions: Float32Array, colors: Uint8Array, pickingColors: Uint8Array, cellValues: Float32Array, cellCount: number, vertexCount: number}}
+ */
+function tessellateTriangles(
+  cornerLon,
+  cornerLat,
+  cornerData,
+  centerData,
+  rows,
+  cols,
+  colorLUT,
+  vmin,
+  vmax,
+  opacity = 210
+) {
+  const cellCount = rows * cols;
+  const vertexCount = cellCount * 6;
+  const cornerCols = cols + 1;
+  const positions = new Float32Array(vertexCount * 3);
+  const colors = new Uint8Array(vertexCount * 4);
+  const pickingColors = new Uint8Array(vertexCount * 3);
+  const cellValues = new Float32Array(cellCount);
+  const range = vmax - vmin || 1;
+
+  let positionOffset = 0;
+  let colorOffset = 0;
+  let pickingOffset = 0;
+
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const cell = i * cols + j;
+      const sw = i * cornerCols + j;
+      const se = sw + 1;
+      const nw = (i + 1) * cornerCols + j;
+      const ne = nw + 1;
+      const centerValue = centerData[cell];
+      const visible = isValidValue(centerValue);
+      cellValues[cell] = centerValue;
+
+      const vertexCorners = [sw, se, ne, sw, ne, nw];
+      for (let k = 0; k < vertexCorners.length; k++) {
+        const corner = vertexCorners[k];
+        positions[positionOffset++] = cornerLon[corner];
+        positions[positionOffset++] = cornerLat[corner];
+        positions[positionOffset++] = 0;
+
+        writeColor(
+          cornerData[corner],
+          colorLUT,
+          vmin,
+          range,
+          opacity,
+          colors,
+          colorOffset,
+          visible
+        );
+        colorOffset += 4;
+
+        encodePickingColor(cell, pickingColors, pickingOffset);
+        pickingOffset += 3;
+      }
+    }
+  }
+
+  return { positions, colors, pickingColors, cellValues, cellCount, vertexCount };
+}
+
 /**
  * Build a deck.gl SolidPolygonLayer from tessellated curvilinear data.
  * Requires the deck.gl global bundle to be loaded on the page.
@@ -163,9 +332,23 @@ function dataRange(data, fillThreshold = 1e36) {
   return [lo, hi];
 }
 
-export { loadColorLUT, tessellate, buildLayer, dataRange };
+export {
+  loadColorLUT,
+  tessellate,
+  inferCornersFromCenters,
+  tessellateTriangles,
+  buildLayer,
+  dataRange,
+};
 
 // Script-tag usage (no bundler): expose as global
 if (typeof window !== 'undefined') {
-  window.CurvilinearMeshLayer = { loadColorLUT, tessellate, buildLayer, dataRange };
+  window.CurvilinearMeshLayer = {
+    loadColorLUT,
+    tessellate,
+    inferCornersFromCenters,
+    tessellateTriangles,
+    buildLayer,
+    dataRange,
+  };
 }
