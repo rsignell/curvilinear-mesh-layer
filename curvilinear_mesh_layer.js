@@ -163,9 +163,9 @@ function dataRange(data, fillThreshold = 1e36) {
   return [lo, hi];
 }
 
-// Export for both ES-module and script-tag usage
-if (typeof module !== 'undefined') {
-  module.exports = { loadColorLUT, tessellate, buildLayer, dataRange };
-} else {
+export { loadColorLUT, tessellate, buildLayer, dataRange };
+
+// Script-tag usage (no bundler): expose as global
+if (typeof window !== 'undefined') {
   window.CurvilinearMeshLayer = { loadColorLUT, tessellate, buildLayer, dataRange };
 }

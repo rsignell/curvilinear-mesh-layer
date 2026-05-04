@@ -11,8 +11,7 @@
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { Repository } from '@earthmover/icechunk';
-import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
+import { IcechunkStore } from 'icechunk-js';
 import { root as zarrRoot, open as zarrOpen, get as zarrGet, slice } from 'zarrita';
 import { loadColorLUT, tessellate, buildLayer, dataRange } from '../curvilinear_mesh_layer.js';
 
@@ -88,21 +87,7 @@ map.on('load', () => {
 // ── Open icechunk store ────────────────────────────────────────────────────────
 async function openIcechunkStore() {
   setStatus('Opening icechunk store…');
-
-  const storage = createFetchStorage(ICECHUNK_URL);
-
-  // authorizeVirtualChunkAccess: allows icechunk.js to resolve virtual chunk
-  // references (which point to the source NetCDF files at the same S3 bucket).
-  // Pass null for anonymous/public access.
-  // NOTE: Virtual chunk support in the WASM build requires icechunk.js ≥ 2.1.
-  // If this fails with a "virtual chunks not supported" error, see README for
-  // the binary-file fallback in coawst_viewer.html.
-  const repo = await Repository.open(storage, undefined, {
-    'https://usgs-coawst.s3.us-west-2.amazonaws.com/': null,
-  });
-
-  const session = await repo.readonlySession({ branch: 'main' });
-  return session.store;
+  return IcechunkStore.open(ICECHUNK_URL, { branch: 'main' });
 }
 
 // ── Read a zarr array from the store ──────────────────────────────────────────
