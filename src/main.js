@@ -87,7 +87,7 @@ map.on('load', () => {
 // ── Open icechunk store ────────────────────────────────────────────────────────
 async function openIcechunkStore() {
   setStatus('Opening icechunk store…');
-  return IcechunkStore.open(ICECHUNK_URL, { branch: 'main' });
+  return IcechunkStore.open(ICECHUNK_URL, { branch: 'main', formatVersion: 'v1' });
 }
 
 // ── Read a zarr array from the store ──────────────────────────────────────────
