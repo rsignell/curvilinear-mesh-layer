@@ -11,7 +11,10 @@
   },
   "dependencies": {
     "@earthmover/icechunk": "^2.0.3",
+    "@emnapi/core": "^1.9.2",
+    "@emnapi/runtime": "^1.9.2",
     "@luma.gl/engine": "^9.3.3",
+    "@napi-rs/wasm-runtime": "^1.1.4",
     "bubblewrap": "^0.2.0",
     "deck.gl": "^9.3.2",
     "maplibre-gl": "^4.7.0",
