@@ -60,12 +60,12 @@ test('tessellateTriangles emits fixed SW-SE-NE and SW-NE-NW triangles', () => {
     0, 1, 0,
   ]);
   assert.deepEqual(Array.from(tess.pickingColors), [
-    1, 0, 0,
-    1, 0, 0,
-    1, 0, 0,
-    1, 0, 0,
-    1, 0, 0,
-    1, 0, 0,
+    1, 0, 0, 255,
+    1, 0, 0, 255,
+    1, 0, 0, 255,
+    1, 0, 0, 255,
+    1, 0, 0, 255,
+    1, 0, 0, 255,
   ]);
   assert.deepEqual(Array.from(tess.colors.slice(0, 8)), [
     0, 0, 0, 200,

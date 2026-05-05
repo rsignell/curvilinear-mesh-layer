@@ -15,8 +15,8 @@ vectors. Standard map tile libraries can't render this directly.
 
 The Vite viewer solves this in three steps:
 
-1. **Read** — icechunk.js opens `s3://usgs-coawst/.../coawst-useast.icechunk`
-   via `createFetchStorage` (HTTP byte-range requests, no AWS credentials)
+1. **Read** — `@earthmover/icechunk` opens `s3://usgs-coawst/.../coawst-useast.icechunk`
+   via a v2-only fetch storage adapter (HTTP byte-range requests, no AWS credentials)
    and zarrita reads a single time slice of any variable
 2. **Tessellate** — center lon/lat coordinates are extrapolated to inferred
    cell corners; each inferred quad is split into two fixed-diagonal triangles
