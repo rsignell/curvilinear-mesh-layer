@@ -50,7 +50,7 @@ import { IcechunkStore } from 'icechunk-js';
 zarrStore = await IcechunkStore.open(ICECHUNK_URL, { branch: 'main' });
 ```
 
-`IcechunkStore` implements zarrita's `AsyncReadable` interface directly. All downstream `zarrOpen` / `zarrGet` calls are unchanged.
+`IcechunkStore` implements zarrita's `AsyncReadable` interface directly. All downstream `zarrOpen` / `zarrGet` calls are unchanged. The existing `zarrRoot(zarrStore).resolve(path)` pattern works because `IcechunkStore` satisfies the `AsyncReadable` contract. Alternatively, `zarrStore.resolve(path)` (as in the CarbonPlan demo) also works — either is fine.
 
 `icechunk-js` translates `s3://usgs-coawst/...` virtual chunk references to `https://usgs-coawst.s3.amazonaws.com/...` automatically via its `translateToHttpUrl` function — no `authorizeVirtualChunkAccess` equivalent needed.
 
