@@ -1,7 +1,7 @@
 {
   "name": "curvilinear-mesh-layer",
   "version": "0.1.0",
-  "description": "Browser visualization of 2D curvilinear ocean model grids (ROMS/COAWST) with deck.gl + icechunk-js",
+  "description": "Browser visualization of 2D curvilinear ocean model grids (ROMS/COAWST) with deck.gl + @earthmover/icechunk",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,10 +11,11 @@
     "smoke:pages": "node scripts/smoke-pages.mjs"
   },
   "dependencies": {
+    "@earthmover/icechunk": "^2.0.3",
+    "@earthmover/icechunk-wasm32-wasi": "^2.0.3",
     "@luma.gl/engine": "^9.3.3",
     "bubblewrap": "^0.2.0",
     "deck.gl": "^9.3.2",
-    "icechunk-js": "^0.4.0",
     "maplibre-gl": "^4.7.0",
     "playwright": "^1.59.1",
     "zarrita": "^0.7.2"

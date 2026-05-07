@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install        # install dependencies
-npm run dev        # dev server at http://localhost:5173
-npm run build      # production build → dist/
-npm run preview    # serve dist/ locally
+npm install --force  # install dependencies (--force required for @earthmover/icechunk-wasm32-wasi cross-platform)
+npm run dev          # dev server at http://localhost:5173
+npm run build        # production build → dist/
+npm run preview      # serve dist/ locally
 ```
 
 No test suite or linter is configured.
@@ -31,7 +31,7 @@ icechunk.js (WASM) + zarrita
 - `curvilinear_mesh_layer.js` — reusable module with four exported functions: `loadColorLUT`, `tessellate`, `buildLayer`, `dataRange`. Dual-mode: ES import or `window.CurvilinearMeshLayer` via `<script>` tag.
 - `src/main.js` — app logic. Opens the icechunk store once, caches `lon`/`lat` grid coordinates across loads, reads zarr arrays per-click, calls the layer module, and updates the deck.gl overlay.
 - `coawst_viewer.html` — standalone fallback (no bundler, no WASM) that reads pre-exported binary files instead of the icechunk store.
-- `vite.config.js` — WASM support via `vite-plugin-wasm` + `vite-plugin-top-level-await`; `@earthmover/icechunk` is excluded from Vite pre-bundling; COOP/COEP headers for SharedArrayBuffer.
+- `vite.config.js` — Vite 6 handles the WASM binary natively (no wasm plugins needed); COOP/COEP headers for SharedArrayBuffer (required by deck.gl/luma.gl).
 
 **Tessellation details:**
 
@@ -39,7 +39,7 @@ icechunk.js (WASM) + zarrita
 
 **icechunk / virtual chunks:**
 
-The COAWST store uses virtual chunks — references to byte ranges in source NetCDF files on S3. `Repository.open()` takes an `authorizeVirtualChunkAccess` map with `null` for anonymous public access. Virtual chunk support requires `@earthmover/icechunk` ≥ 2.1.
+The COAWST store uses virtual chunks — references to byte ranges in source NetCDF files on S3. `createFetchStorage` handles the icechunk metadata (manifests) via browser `fetch`. `Repository.open()` takes an `authorizeVirtualChunkAccess` map with `null` for anonymous public access. The `@earthmover/icechunk-wasm32-wasi` WASM binary handles `compressed_location` decoding and virtual chunk fetching in the browser.
 
 ## Extending to other grids
 
