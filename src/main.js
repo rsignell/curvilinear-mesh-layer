@@ -11,8 +11,7 @@
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { Repository } from '@earthmover/icechunk';
-import { createFetchStorage } from '@earthmover/icechunk/fetch-storage';
+import { IcechunkStore } from 'icechunk-js';
 import { open as zarrOpen, get as zarrGet, root as zarrRoot, slice } from 'zarrita';
 import {
   inferCornersFromCenters,
@@ -94,12 +93,7 @@ map.on('load', () => {
 async function openStore() {
   if (zarrStore) return zarrStore;
   setStatus('Opening icechunk store…');
-  const storage = createFetchStorage(ICECHUNK_URL);
-  const repo = await Repository.open(storage, undefined, {
-    'https://usgs-coawst.s3.us-west-2.amazonaws.com/': null,
-  });
-  const session = await repo.readonlySession({ branch: 'main' });
-  zarrStore = session.store;
+  zarrStore = await IcechunkStore.open(ICECHUNK_URL, { branch: 'main' });
   return zarrStore;
 }
 

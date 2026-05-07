@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci --force
+      - run: npm ci
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci --force
+      - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Smoke test deployed GitHub Pages app
         run: npm run smoke:pages -- "${{ needs.deploy.outputs.page_url }}"
