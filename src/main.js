@@ -1,7 +1,7 @@
 /**
  * COAWST Curvilinear Grid Viewer
  *
- * Opens the COAWST icechunk v2 store via Earthmover's @earthmover/icechunk,
+ * Opens the COAWST icechunk v2 store via icechunk-js,
  * reads zarr arrays through zarrita, infers curvilinear
  * cell corners, and renders with deck.gl over a MapLibre basemap.
  *
@@ -11,7 +11,7 @@
 
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { Repository } from '@earthmover/icechunk';
+import { IcechunkStore } from 'icechunk-js';
 import { open as zarrOpen, get as zarrGet, root as zarrRoot, slice } from 'zarrita';
 import {
   inferCornersFromCenters,
@@ -20,7 +20,6 @@ import {
   dataRange,
 } from '../curvilinear_mesh_layer.js';
 import { buildTriangleLayer } from './curvilinear_triangle_layer.js';
-import { createIcechunkV2FetchStorage } from './icechunk_v2_fetch_storage.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const ROWS = 336, COLS = 896;
@@ -40,7 +39,7 @@ const VAR_META = {
 };
 
 // ── App state ─────────────────────────────────────────────────────────────────
-let zarrStore = null;   // readonly Icechunk session store (opened once, reused across loads)
+let zarrStore = null;   // IcechunkStore instance (opened once, reused across loads)
 let lon = null;         // Float32Array grid coordinates (cached)
 let lat = null;
 let deckOverlay = null;
@@ -94,12 +93,7 @@ map.on('load', () => {
 async function openStore() {
   if (zarrStore) return zarrStore;
   setStatus('Opening icechunk store…');
-  const storage = createIcechunkV2FetchStorage(ICECHUNK_URL);
-  const repo = await Repository.open(storage, undefined, {
-    'https://usgs-coawst.s3.us-west-2.amazonaws.com/': null,
-  });
-  const session = await repo.readonlySession({ branch: 'main' });
-  zarrStore = session.store;
+  zarrStore = await IcechunkStore.open(ICECHUNK_URL, { branch: 'main' });
   return zarrStore;
 }
 

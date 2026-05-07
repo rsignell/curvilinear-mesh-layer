@@ -23,11 +23,6 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - name: Install icechunk WASM package (bypasses cpu:wasm32 platform check)
-        run: |
-          mkdir -p node_modules/@earthmover/icechunk-wasm32-wasi
-          curl -sL "https://registry.npmjs.org/@earthmover/icechunk-wasm32-wasi/-/icechunk-wasm32-wasi-2.0.3.tgz" \
-            | tar xz --strip-components=1 -C node_modules/@earthmover/icechunk-wasm32-wasi
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
