@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
+      - run: npm ci --force
       - run: npx playwright install --with-deps chromium
       - name: Smoke test deployed GitHub Pages app
         run: npm run smoke:pages -- "${{ needs.deploy.outputs.page_url }}"
